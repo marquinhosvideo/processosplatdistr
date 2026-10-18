@@ -49,7 +49,7 @@ func TestSPAFallbackToIndex(t *testing.T) {
 	if !s.Built() {
 		t.Fatal("Built() = false com index.html")
 	}
-	for _, p := range []string{"/", "/qualquer", "/candidatos/12", "/nine-box/3/meus-liderados", "/candidatos/", "/index.html", "/sobre", "/apis"} {
+	for _, p := range []string{"/", "/qualquer", "/candidatos/12", "/nine-box/3/meus-liderados", "/candidatos/", "/index.html", "/sobre", "/apis", "/pessoas/ana.souza", "/x/y.png", "/assetsx/a.js"} {
 		rec := get(s, "GET", p+"?x=1")
 		if rec.Code != 200 || rec.Body.String() != indexHTML {
 			t.Errorf("%s: status=%d corpo=%.40q", p, rec.Code, rec.Body)
@@ -89,7 +89,7 @@ func TestSPAStaticFiles(t *testing.T) {
 
 func TestSPAMissingFilesAre404(t *testing.T) {
 	s := newSPA(t, builtFS())
-	for _, p := range []string{"/assets/index-velho.js", "/assets/", "/assets/sub/x", "/favicon.ico", "/x/y.png"} {
+	for _, p := range []string{"/assets/index-velho.js", "/assets", "/assets/", "/assets/sub/x", "/favicon.ico", "/manifest.webmanifest"} {
 		rec := get(s, "GET", p)
 		if rec.Code != 404 || strings.Contains(rec.Body.String(), "<html") {
 			t.Errorf("%s: status=%d corpo=%q", p, rec.Code, rec.Body)

@@ -110,8 +110,8 @@ func (s *SPA) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if looksLikeFile(name) {
-		// Arquivo inexistente não vira index.html: um chunk JS antigo receberia
-		// HTML e quebraria com erro confuso no navegador.
+		// Asset ou arquivo da raiz inexistente não vira index.html: um chunk JS
+		// antigo receberia HTML e quebraria com erro confuso no navegador.
 		w.Header().Set("Cache-Control", "no-store")
 		http.Error(w, "Arquivo não encontrado.", http.StatusNotFound)
 		return
@@ -142,8 +142,14 @@ func reserved(p string) bool {
 	return false
 }
 
+// looksLikeFile vale para /assets/* (onde o Vite põe tudo o que gera) e para
+// nomes com extensão na raiz (favicon.ico, robots.txt). Um caminho mais fundo
+// com ponto, como /pessoas/ana.souza, continua sendo página do SPA.
 func looksLikeFile(name string) bool {
-	return name == "assets" || strings.HasPrefix(name, "assets/") || path.Ext(name) != ""
+	if name == "assets" || strings.HasPrefix(name, "assets/") {
+		return true
+	}
+	return !strings.Contains(name, "/") && path.Ext(name) != ""
 }
 
 func contentType(name string) string {
