@@ -10,10 +10,12 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/marquinhosvideo/processosplatdistr/internal/buildinfo"
 	"github.com/marquinhosvideo/processosplatdistr/internal/config"
 	"github.com/marquinhosvideo/processosplatdistr/internal/httpx"
+	"github.com/marquinhosvideo/processosplatdistr/internal/web"
 )
 
 func testConfig(t *testing.T, kv ...string) *config.Config {
@@ -39,9 +41,17 @@ func testConfig(t *testing.T, kv ...string) *config.Config {
 	return cfg
 }
 
+const indexHTML = "<!doctype html><title>Processos</title>"
+
 func testHandler(t *testing.T, logs *bytes.Buffer, kv ...string) http.Handler {
 	t.Helper()
-	spa := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusTeapot) })
+	spa, err := web.New(fstest.MapFS{
+		"index.html":         {Data: []byte(indexHTML)},
+		"assets/app-1a2b.js": {Data: []byte("1")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	logger := slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	return New(Deps{Config: testConfig(t, kv...), Logger: logger, SPA: spa})
 }
@@ -95,6 +105,27 @@ func TestHealthz(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), `"route":"GET /healthz"`) || !strings.Contains(logs.String(), `"level":"DEBUG","msg":"http.request"`) {
 		t.Errorf("log do healthcheck: %s", logs.String())
+	}
+}
+
+func TestSPAServedForAnyPage(t *testing.T) {
+	var logs bytes.Buffer
+	h := testHandler(t, &logs)
+	for _, p := range []string{"/", "/qualquer", "/candidatos/12?aba=entrevistas"} {
+		rec := do(h, "GET", p)
+		if rec.Code != 200 || rec.Body.String() != indexHTML {
+			t.Errorf("%s: %d %q", p, rec.Code, rec.Body)
+		}
+		if rec.Header().Get("Content-Security-Policy") != httpx.CSPSPA || rec.Header().Get("Cache-Control") != "no-cache" {
+			t.Errorf("%s: headers = %v", p, rec.Header())
+		}
+	}
+	rec := do(h, "GET", "/assets/app-1a2b.js")
+	if rec.Code != 200 || rec.Header().Get("Cache-Control") != "public, max-age=31536000, immutable" {
+		t.Errorf("asset: %d %v", rec.Code, rec.Header())
+	}
+	if !strings.Contains(logs.String(), `"route":"/"`) {
+		t.Errorf("rota do SPA não registrada no log: %s", logs.String())
 	}
 }
 

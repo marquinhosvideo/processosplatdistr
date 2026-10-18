@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
@@ -15,8 +16,8 @@ import (
 
 	"github.com/marquinhosvideo/processosplatdistr/internal/buildinfo"
 	"github.com/marquinhosvideo/processosplatdistr/internal/config"
-	"github.com/marquinhosvideo/processosplatdistr/internal/httpx"
 	"github.com/marquinhosvideo/processosplatdistr/internal/server"
+	"github.com/marquinhosvideo/processosplatdistr/internal/web"
 )
 
 // ShutdownTimeout é o prazo para as requisições em andamento no SIGTERM.
@@ -32,8 +33,17 @@ func NewLogger(w io.Writer, level slog.Level) *slog.Logger {
 // Serve atende HTTP em ln até ctx ser cancelado e então encerra com
 // graceful shutdown. cfg já deve ter passado por config.Load.
 func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln net.Listener) error {
-	// O SPA embutido ainda não existe; páginas respondem 404.
-	spa := httpx.HandlerFunc(func(http.ResponseWriter, *http.Request) error { return httpx.NotFound() })
+	return serve(ctx, cfg, logger, ln, web.Dist())
+}
+
+func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln net.Listener, dist fs.FS) error {
+	spa, err := web.New(dist)
+	if err != nil {
+		return err
+	}
+	if !spa.Built() {
+		logger.Warn("web.not_built", slog.String("detail", "frontend não compilado: as páginas respondem 503 até rodar make build"))
+	}
 
 	srv := server.HTTPServer(server.New(server.Deps{Config: cfg, Logger: logger, SPA: spa}), logger)
 	errc := make(chan error, 1)

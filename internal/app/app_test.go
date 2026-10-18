@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/marquinhosvideo/processosplatdistr/internal/config"
@@ -54,7 +55,7 @@ func testConfig(t *testing.T) *config.Config {
 	return cfg
 }
 
-func startServe(t *testing.T) (base string, logs *syncBuffer, stop func() error) {
+func startServe(t *testing.T, dist fstest.MapFS) (base string, logs *syncBuffer, stop func() error) {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -64,7 +65,7 @@ func startServe(t *testing.T) (base string, logs *syncBuffer, stop func() error)
 	logger := slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- Serve(ctx, testConfig(t), logger, ln) }()
+	go func() { done <- serve(ctx, testConfig(t), logger, ln, dist) }()
 	stop = func() error {
 		cancel()
 		select {
@@ -91,10 +92,13 @@ func fetch(t *testing.T, url string) (int, string) {
 }
 
 func TestServeAndGracefulShutdown(t *testing.T) {
-	base, logs, stop := startServe(t)
+	base, logs, stop := startServe(t, fstest.MapFS{"index.html": {Data: []byte("<!doctype html>spa")}})
 
 	if code, body := fetch(t, base+"/healthz"); code != 200 || !strings.Contains(body, `"status":"ok"`) {
 		t.Errorf("/healthz = %d %s", code, body)
+	}
+	if code, body := fetch(t, base+"/qualquer"); code != 200 || body != "<!doctype html>spa" {
+		t.Errorf("/qualquer = %d %s", code, body)
 	}
 	if code, _ := fetch(t, base+"/api/v1/nada"); code != 404 {
 		t.Errorf("/api/v1/nada = %d", code)
@@ -106,6 +110,25 @@ func TestServeAndGracefulShutdown(t *testing.T) {
 		if !strings.Contains(logs.String(), `"msg":"`+msg+`"`) {
 			t.Errorf("log sem %s: %s", msg, logs.String())
 		}
+	}
+	if strings.Contains(logs.String(), "web.not_built") {
+		t.Error("aviso de frontend não compilado com index.html presente")
+	}
+}
+
+func TestServeWarnsWhenFrontendMissing(t *testing.T) {
+	base, logs, stop := startServe(t, fstest.MapFS{"robots.txt": {Data: []byte("User-agent: *\n")}})
+	if code, body := fetch(t, base+"/"); code != 503 || !strings.Contains(body, "Frontend não compilado") {
+		t.Errorf("/ = %d %s", code, body)
+	}
+	if code, _ := fetch(t, base+"/healthz"); code != 200 {
+		t.Errorf("/healthz sem frontend = %d", code)
+	}
+	if err := stop(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(logs.String(), `"msg":"web.not_built"`) {
+		t.Errorf("sem aviso de frontend ausente: %s", logs.String())
 	}
 }
 

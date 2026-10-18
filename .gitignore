@@ -1,0 +1,31 @@
+# Binários e estado local (MySQL de dev, caches)
+/bin/
+/.tmp/
+
+# Build do SPA: gerado pelo Vite; só o robots.txt é versionado (SDD §10.1)
+internal/web/dist/*
+!internal/web/dist/robots.txt
+
+# Frontend
+web/node_modules/
+web/coverage/
+web/test-results/
+web/playwright-report/
+web/blob-report/
+web/.vite/
+*.tsbuildinfo
+
+# Go
+*.test
+*.out
+*.prof
+
+# Variáveis locais (segredos)
+.env
+.env.*
+!.env.example
+
+# Editores e sistema
+.DS_Store
+.idea/
+*.swp
