@@ -55,7 +55,7 @@ const SessionKeySize = 32
 type Config struct {
 	Env      Env
 	Port     int
-	BaseURL  string // APP_BASE_URL sem barra final, ex.: https://processos.exemplo.com
+	BaseURL  string // APP_BASE_URL sem barra final, esquema e host em minúsculas, ex.: https://processos.exemplo.com
 	TZName   string
 	Location *time.Location
 	LogLevel slog.Level
@@ -70,7 +70,7 @@ type Config struct {
 	DBMaxIdleConns    int
 	DBConnMaxLifetime time.Duration
 
-	OIDCIssuerURL       string
+	OIDCIssuerURL       string // exatamente como configurado: o go-oidc e o RFC 9207 comparam byte a byte
 	OIDCClientID        string
 	OIDCClientSecret    Secret // vazio = cliente público com PKCE
 	OIDCScopes          []string
@@ -139,7 +139,7 @@ func FromEnv(getenv func(string) string) (*Config, error) {
 	c := &Config{
 		Env:      Env(p.str("APP_ENV", string(EnvProduction))),
 		Port:     p.int("PORT", 8888),
-		BaseURL:  strings.TrimRight(p.str("APP_BASE_URL", ""), "/"),
+		BaseURL:  normalizeBaseURL(p.str("APP_BASE_URL", "")),
 		TZName:   p.str("APP_TZ", "America/Sao_Paulo"),
 		LogLevel: p.level("LOG_LEVEL", slog.LevelInfo),
 
@@ -152,7 +152,7 @@ func FromEnv(getenv func(string) string) (*Config, error) {
 		DBMaxIdleConns:    p.int("DB_MAX_IDLE_CONNS", 5),
 		DBConnMaxLifetime: p.duration("DB_CONN_MAX_LIFETIME", 5*time.Minute),
 
-		OIDCIssuerURL:       strings.TrimRight(p.str("OIDC_ISSUER_URL", ""), "/"),
+		OIDCIssuerURL:       p.str("OIDC_ISSUER_URL", ""),
 		OIDCClientID:        p.str("OIDC_CLIENT_ID", ""),
 		OIDCClientSecret:    p.secret("OIDC_CLIENT_SECRET"),
 		OIDCScopes:          strings.Fields(strings.ReplaceAll(p.str("OIDC_SCOPES", "openid profile email"), ",", " ")),
@@ -248,8 +248,9 @@ func (c *Config) validate(v *parser) {
 	}
 
 	baseURL := v.httpURL("APP_BASE_URL", c.BaseURL, true)
-	if baseURL != nil && (baseURL.Path != "" || baseURL.RawQuery != "" || baseURL.Fragment != "" || baseURL.User != nil) {
-		v.add("APP_BASE_URL", "deve conter só esquema, host e porta (sem caminho, query ou credenciais)")
+	// "?" ou "#" vazios também contam: a base é concatenada com /auth/callback.
+	if baseURL != nil && (baseURL.Path != "" || strings.ContainsAny(c.BaseURL, "?#")) {
+		v.add("APP_BASE_URL", "deve conter só esquema, host e porta (sem caminho, query ou fragmento)")
 	}
 
 	if c.DBTLSCAPEM != "" && !x509.NewCertPool().AppendCertsFromPEM([]byte(c.DBTLSCAPEM)) {
@@ -264,6 +265,9 @@ func (c *Config) validate(v *parser) {
 	v.positive("DB_CONN_MAX_LIFETIME", c.DBConnMaxLifetime)
 
 	issuer := v.httpURL("OIDC_ISSUER_URL", c.OIDCIssuerURL, true)
+	if issuer != nil && (issuer.RawQuery != "" || issuer.Fragment != "") {
+		v.add("OIDC_ISSUER_URL", "não pode ter query nem fragmento")
+	}
 	if c.OIDCClientID == "" {
 		v.add("OIDC_CLIENT_ID", "obrigatória")
 	}
@@ -285,13 +289,11 @@ func (c *Config) validate(v *parser) {
 
 	if !c.SessionEncKey.IsSet() {
 		v.add("SESSION_ENC_KEY", "obrigatória (base64 de %d bytes)", SessionKeySize)
-	} else if _, err := DecodeKey(c.SessionEncKey); err != nil {
-		v.add("SESSION_ENC_KEY", "%v", err)
+	} else {
+		c.validateKey(v, "SESSION_ENC_KEY", c.SessionEncKey)
 	}
 	if c.SessionEncKeyPrevious.IsSet() {
-		if _, err := DecodeKey(c.SessionEncKeyPrevious); err != nil {
-			v.add("SESSION_ENC_KEY_PREVIOUS", "%v", err)
-		}
+		c.validateKey(v, "SESSION_ENC_KEY_PREVIOUS", c.SessionEncKeyPrevious)
 	}
 	v.positive("SESSION_IDLE_TIMEOUT", c.SessionIdleTimeout)
 	v.positive("SESSION_ABSOLUTE_TIMEOUT", c.SessionAbsoluteTimeout)
@@ -362,8 +364,49 @@ func (c *Config) validate(v *parser) {
 	}
 }
 
+// validateKey exige o tamanho da chave e, fora de dev e test, recusa chaves
+// que não vieram de um gerador aleatório: as de teste, públicas no
+// repositório, e as de poucos bytes distintos (zeros, "AAAA…", padrões).
+func (c *Config) validateKey(v *parser, key string, s Secret) {
+	raw, err := DecodeKey(s)
+	if err != nil {
+		v.add(key, "%v", err)
+		return
+	}
+	if c.Env.DevLike() {
+		return
+	}
+	if slices.Contains(publicKeys, string(raw)) || distinctBytes(raw) < minDistinctKeyBytes {
+		v.add(key, "chave fraca ou pública; gere uma por ambiente com: head -c 32 /dev/urandom | base64")
+	}
+}
+
+// publicKeys são chaves versionadas no repositório, só para teste.
+var publicKeys = []string{
+	"e2e-only-session-key-32-bytes!!!", // web/playwright.config.ts
+}
+
+// minDistinctKeyBytes: 32 bytes aleatórios têm em média 30 valores distintos;
+// menos de 16 só acontece com chave digitada ou padrão repetido.
+const minDistinctKeyBytes = 16
+
+func distinctBytes(b []byte) int {
+	var seen [256]bool
+	n := 0
+	for _, x := range b {
+		if !seen[x] {
+			seen[x] = true
+			n++
+		}
+	}
+	return n
+}
+
 // HTTPS informa se APP_BASE_URL usa https (liga o HSTS).
-func (c *Config) HTTPS() bool { return strings.HasPrefix(c.BaseURL, "https://") }
+func (c *Config) HTTPS() bool {
+	u, err := url.Parse(c.BaseURL)
+	return err == nil && u.Scheme == "https"
+}
 
 // LogAttrs resume a configuração sem segredos, para o log de partida.
 func (c *Config) LogAttrs() []slog.Attr {
@@ -398,12 +441,34 @@ func DecodeKey(s Secret) ([]byte, error) {
 	return nil, fmt.Errorf("não é base64 válido")
 }
 
+// normalizeBaseURL tira a barra final e põe esquema e host em minúsculas: o
+// valor é a origem comparada com o Origin no CSRF e a base do redirect_uri.
+// Um valor que não analisa fica como veio, para a validação explicar.
+func normalizeBaseURL(raw string) string {
+	raw = strings.TrimRight(raw, "/")
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return raw
+	}
+	u.Host = strings.ToLower(u.Host) // url.Parse já pôs o esquema em minúsculas
+	return u.String()
+}
+
+// loopbackNames são os nomes que o /etc/hosts das imagens Linux (Debian,
+// Alpine, RHEL) aponta para 127.0.0.1 ou ::1. O binário é estático
+// (CGO_ENABLED=0) e o resolvedor Go lê esse arquivo.
+var loopbackNames = []string{
+	"localhost", "localhost.localdomain", "localhost4", "localhost4.localdomain4",
+	"localhost6", "localhost6.localdomain6", "ip6-localhost", "ip6-loopback",
+}
+
 func isLocalhost(host string) bool {
 	host = strings.ToLower(strings.TrimSuffix(host, "."))
-	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+	if slices.Contains(loopbackNames, host) || strings.HasSuffix(host, ".localhost") {
 		return true
 	}
 	if addr, err := netip.ParseAddr(host); err == nil {
+		addr = addr.Unmap() // ::ffff:127.0.0.1
 		return addr.IsLoopback() || addr.IsUnspecified()
 	}
 	return false
@@ -519,8 +584,8 @@ func (p *parser) positive(key string, d time.Duration) {
 	}
 }
 
-// httpURL valida uma URL absoluta http(s) e a devolve já analisada (nil se
-// ausente ou inválida).
+// httpURL valida uma URL absoluta http(s) sem credenciais e a devolve já
+// analisada (nil se ausente ou inválida).
 func (p *parser) httpURL(key, raw string, required bool) *url.URL {
 	if raw == "" {
 		if required {
@@ -530,12 +595,26 @@ func (p *parser) httpURL(key, raw string, required bool) *url.URL {
 	}
 	u, err := url.Parse(raw)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		p.add(key, "deve ser uma URL absoluta http ou https (recebido %q)", raw)
+		p.add(key, "deve ser uma URL absoluta http ou https (recebido %s)", echoURL(raw))
+		return nil
+	}
+	if u.User != nil {
+		// Credencial na URL acabaria no log de partida; segredo vai em variável própria.
+		p.add(key, "não pode conter credenciais (usuário:senha@)")
 		return nil
 	}
 	if _, port, err := net.SplitHostPort(u.Host); err == nil && port == "" {
-		p.add(key, "porta vazia em %q", raw)
+		p.add(key, "porta vazia em %s", echoURL(raw))
 		return nil
 	}
 	return u
+}
+
+// echoURL repete o valor recusado na mensagem de erro, que vai para o log do
+// deploy, a não ser que ele possa trazer credenciais.
+func echoURL(raw string) string {
+	if strings.Contains(raw, "@") {
+		return "valor omitido: contém @ e pode trazer credenciais"
+	}
+	return strconv.Quote(raw)
 }

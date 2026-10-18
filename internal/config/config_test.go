@@ -15,8 +15,12 @@ import (
 	_ "time/tzdata"
 )
 
-// devKey é uma chave de 32 B só para testes.
-var devKey = base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef"))
+// devKey é uma chave de 32 B só para testes; prodKey veio de /dev/urandom,
+// para passar pela recusa de chaves fracas fora de dev e test.
+var (
+	devKey  = base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef"))
+	prodKey = "3rHfT+ZqQuL8jt++3hq0AHro93k8LoMpV3oz7kbWbe8="
+)
 
 func devEnv() map[string]string {
 	return map[string]string{
@@ -42,7 +46,7 @@ func prodEnv() map[string]string {
 		"OIDC_CLIENT_ID":        "processos",
 		"OIDC_CLIENT_SECRET":    "s3cr3t-do-idp",
 		"ROLE_GROUPS_MANAGER":   "/gestores",
-		"SESSION_ENC_KEY":       devKey,
+		"SESSION_ENC_KEY":       prodKey,
 		"DEFAULT_ORG_UNIT_CODE": "PLATDIST",
 		"DEFAULT_ORG_UNIT_NAME": "Plataformas de Distribuição",
 		"DATABASE_DSN":          "app:senha-do-banco@tcp(db:3306)/app",
@@ -180,6 +184,9 @@ func TestDatabaseURLEnvIndirection(t *testing.T) {
 // As travas de produção da §7.9, uma a uma, partindo de uma config válida.
 func TestProductionLocks(t *testing.T) {
 	shortKey := base64.StdEncoding.EncodeToString([]byte("curta"))
+	zeroKey := base64.StdEncoding.EncodeToString(make([]byte, 32))
+	e2eKey := base64.StdEncoding.EncodeToString([]byte("e2e-only-session-key-32-bytes!!!"))
+	patternKey := base64.StdEncoding.EncodeToString([]byte(strings.Repeat("ab", 16)))
 	tests := []struct {
 		name string
 		kv   []string
@@ -191,9 +198,18 @@ func TestProductionLocks(t *testing.T) {
 		{"issuer subdomínio de localhost", []string{"OIDC_ISSUER_URL", "https://idp.localhost"}, "OIDC_ISSUER_URL: não pode apontar para localhost"},
 		{"issuer loopback v4", []string{"OIDC_ISSUER_URL", "https://127.0.0.1:9000"}, "OIDC_ISSUER_URL: não pode apontar para localhost"},
 		{"issuer loopback v6", []string{"OIDC_ISSUER_URL", "https://[::1]:9000"}, "OIDC_ISSUER_URL: não pode apontar para localhost"},
+		{"issuer loopback v4 em v6", []string{"OIDC_ISSUER_URL", "https://[::ffff:127.0.0.1]"}, "OIDC_ISSUER_URL: não pode apontar para localhost"},
+		{"issuer não especificado", []string{"OIDC_ISSUER_URL", "https://0.0.0.0"}, "OIDC_ISSUER_URL: não pode apontar para localhost"},
+		{"issuer localhost do /etc/hosts", []string{"OIDC_ISSUER_URL", "https://localhost.localdomain:9000"}, "OIDC_ISSUER_URL: não pode apontar para localhost"},
+		{"issuer ip6-localhost", []string{"OIDC_ISSUER_URL", "https://IP6-LOCALHOST."}, "OIDC_ISSUER_URL: não pode apontar para localhost"},
+		{"issuer ip6-loopback", []string{"OIDC_ISSUER_URL", "https://ip6-loopback/realms/x"}, "OIDC_ISSUER_URL: não pode apontar para localhost"},
 		{"cookie inseguro", []string{"COOKIE_SECURE", "false"}, "COOKIE_SECURE: false só é permitido"},
 		{"chave curta", []string{"SESSION_ENC_KEY", shortKey}, "SESSION_ENC_KEY: deve ter 32 bytes"},
 		{"chave ausente", []string{"SESSION_ENC_KEY", ""}, "SESSION_ENC_KEY: obrigatória"},
+		{"chave zerada", []string{"SESSION_ENC_KEY", zeroKey}, "SESSION_ENC_KEY: chave fraca ou pública"},
+		{"chave pública do E2E", []string{"SESSION_ENC_KEY", e2eKey}, "SESSION_ENC_KEY: chave fraca ou pública"},
+		{"chave com padrão repetido", []string{"SESSION_ENC_KEY", patternKey}, "SESSION_ENC_KEY: chave fraca ou pública"},
+		{"chave anterior fraca", []string{"SESSION_ENC_KEY_PREVIOUS", zeroKey}, "SESSION_ENC_KEY_PREVIOUS: chave fraca ou pública"},
 		{"grupos de gestor vazios", []string{"ROLE_GROUPS_MANAGER", " , "}, "ROLE_GROUPS_MANAGER: obrigatória"},
 		{"gerência sem código", []string{"DEFAULT_ORG_UNIT_CODE", ""}, "DEFAULT_ORG_UNIT_CODE: obrigatória"},
 		{"gerência sem nome", []string{"DEFAULT_ORG_UNIT_NAME", ""}, "DEFAULT_ORG_UNIT_NAME: obrigatória"},
@@ -213,12 +229,85 @@ func TestProductionLocks(t *testing.T) {
 }
 
 func TestDevAndTestRelaxLocks(t *testing.T) {
+	e2eKey := base64.StdEncoding.EncodeToString([]byte("e2e-only-session-key-32-bytes!!!"))
 	for _, env := range []string{"dev", "test"} {
 		t.Run(env, func(t *testing.T) {
-			if _, err := load(with(devEnv(), "APP_ENV", env)); err != nil {
-				t.Errorf("%s com http, localhost e COOKIE_SECURE=false recusado: %v", env, err)
+			if _, err := load(with(devEnv(), "APP_ENV", env, "SESSION_ENC_KEY", e2eKey)); err != nil {
+				t.Errorf("%s com http, localhost, chave de teste e COOKIE_SECURE=false recusado: %v", env, err)
 			}
 		})
+	}
+}
+
+// O go-oidc e a checagem do iss (RFC 9207) comparam o issuer byte a byte; o
+// do Azure AD v1 termina em "/".
+func TestIssuerKeptVerbatim(t *testing.T) {
+	for _, issuer := range []string{
+		"https://sts.windows.net/72f988bf-86f1-41af-91ab-2d7cd011db47/",
+		"https://login.microsoftonline.com/72f988bf-86f1-41af-91ab-2d7cd011db47/v2.0",
+		"https://sso.exemplo.com.br/realms/corp/",
+	} {
+		c, err := load(with(prodEnv(), "OIDC_ISSUER_URL", " "+issuer+" "))
+		if err != nil {
+			t.Errorf("%s recusado: %v", issuer, err)
+			continue
+		}
+		if c.OIDCIssuerURL != issuer {
+			t.Errorf("OIDCIssuerURL = %q, want %q", c.OIDCIssuerURL, issuer)
+		}
+	}
+	for _, issuer := range []string{"https://sso.exemplo.com.br/realms/corp?x=1", "https://sso.exemplo.com.br/#frag"} {
+		_, err := load(with(prodEnv(), "OIDC_ISSUER_URL", issuer))
+		if got := problems(t, err); !hasProblem(got, "OIDC_ISSUER_URL: não pode ter query nem fragmento") {
+			t.Errorf("%s: problemas = %q", issuer, got)
+		}
+	}
+}
+
+// A trava de produção e o HSTS veem o mesmo esquema, e a base fica na forma
+// canônica usada no CSRF e no redirect_uri.
+func TestBaseURLNormalized(t *testing.T) {
+	c, err := load(with(prodEnv(), "APP_BASE_URL", "HTTPS://Processos.Exemplo.com.BR:8443/"))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if c.BaseURL != "https://processos.exemplo.com.br:8443" || !c.HTTPS() {
+		t.Errorf("BaseURL = %q, HTTPS() = %v", c.BaseURL, c.HTTPS())
+	}
+	if _, err := load(with(prodEnv(), "APP_BASE_URL", "HTTP://processos.exemplo.com.br")); !hasProblem(problems(t, err), "APP_BASE_URL: deve usar https") {
+		t.Errorf("HTTP maiúsculo passou pela trava: %v", err)
+	}
+	for base, want := range map[string]bool{"HTTPS://x.exemplo.com": true, "https://x.exemplo.com": true, "http://x.exemplo.com": false, "": false} {
+		if got := (&Config{BaseURL: base}).HTTPS(); got != want {
+			t.Errorf("HTTPS(%q) = %v, want %v", base, got, want)
+		}
+	}
+}
+
+// Credenciais embutidas em URL nunca chegam ao log: são recusadas e não são
+// repetidas na mensagem de erro.
+func TestURLCredentialsRejectedAndNotEchoed(t *testing.T) {
+	tests := []struct{ key, value, want string }{
+		{"OIDC_ISSUER_URL", "https://u:senha-do-idp@sso.exemplo.com.br", "OIDC_ISSUER_URL: não pode conter credenciais"},
+		{"APP_BASE_URL", "https://u:senha-da-base@processos.exemplo.com.br", "APP_BASE_URL: não pode conter credenciais"},
+		{"GUPY_BASE_URL", "https://user:gupytoken@api.gupy.io", "GUPY_BASE_URL: não pode conter credenciais"},
+		{"GUPY_BASE_URL", "ftp://user:gupytoken@api.gupy.io", "GUPY_BASE_URL: deve ser uma URL absoluta"},
+		{"GUPY_BASE_URL", "http://user:gupy token@api.gupy.io", "GUPY_BASE_URL: deve ser uma URL absoluta"},
+	}
+	for _, tt := range tests {
+		_, err := load(with(prodEnv(), tt.key, tt.value))
+		got := problems(t, err)
+		if !hasProblem(got, tt.want) || len(got) != 1 {
+			t.Errorf("%s=%s: problemas = %q, want só %q", tt.key, tt.value, got, tt.want)
+		}
+		if msg := err.Error(); strings.Contains(msg, "senha-d") || strings.Contains(msg, "gupytoken") || strings.Contains(msg, "gupy token") {
+			t.Errorf("%s: mensagem vazou a credencial: %s", tt.key, msg)
+		}
+	}
+	// Sem credencial, o valor recusado continua na mensagem, para ajudar o operador.
+	_, err := load(with(prodEnv(), "GUPY_BASE_URL", "api.gupy.io"))
+	if !strings.Contains(err.Error(), `"api.gupy.io"`) {
+		t.Errorf("mensagem sem o valor recusado: %v", err)
 	}
 }
 
@@ -279,6 +368,8 @@ func TestOtherRules(t *testing.T) {
 		want string
 	}{
 		{"base URL com caminho", []string{"APP_BASE_URL", "https://x.exemplo.com/app"}, "APP_BASE_URL: deve conter só"},
+		{"base URL com query vazia", []string{"APP_BASE_URL", "https://x.exemplo.com?"}, "APP_BASE_URL: deve conter só"},
+		{"base URL com fragmento", []string{"APP_BASE_URL", "https://x.exemplo.com#x"}, "APP_BASE_URL: deve conter só"},
 		{"base URL relativa", []string{"APP_BASE_URL", "processos.exemplo.com"}, "APP_BASE_URL: deve ser uma URL absoluta"},
 		{"base URL ftp", []string{"APP_BASE_URL", "ftp://x.exemplo.com"}, "APP_BASE_URL: deve ser uma URL absoluta"},
 		{"porta fora da faixa", []string{"PORT", "70000"}, "PORT: deve estar entre"},
@@ -394,7 +485,7 @@ func TestConfigPrintDoesNotLeakSecrets(t *testing.T) {
 	slog.New(slog.NewJSONHandler(&buf, nil)).Info("config", "cfg", c)
 	slog.New(slog.NewJSONHandler(&buf, nil)).LogAttrs(t.Context(), slog.LevelInfo, "config", c.LogAttrs()...)
 	out := fmt.Sprintf("%v %+v %#v", c, *c, *c) + buf.String()
-	for _, secret := range []string{"s3cr3t-do-idp", devKey, "senha-do-banco", "token-de-metricas"} {
+	for _, secret := range []string{"s3cr3t-do-idp", prodKey, "senha-do-banco", "token-de-metricas"} {
 		if strings.Contains(out, secret) {
 			t.Errorf("segredo %q vazou", secret)
 		}

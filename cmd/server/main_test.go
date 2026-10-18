@@ -16,7 +16,8 @@ import (
 	"github.com/marquinhosvideo/processosplatdistr/internal/buildinfo"
 )
 
-var key32 = base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef"))
+// key32 veio de /dev/urandom: produção recusa chaves fracas ou públicas.
+const key32 = "3rHfT+ZqQuL8jt++3hq0AHro93k8LoMpV3oz7kbWbe8="
 
 func prodEnv() map[string]string {
 	return map[string]string{
