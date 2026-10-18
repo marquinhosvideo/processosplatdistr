@@ -1,0 +1,8 @@
+healthcheck:
+  path: /healthz
+  method: GET
+  status: 200
+  scheme: http
+  interval_seconds: 10
+  timeout_seconds: 5
+  allowed_failures: 3

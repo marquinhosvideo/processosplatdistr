@@ -1,0 +1,9 @@
+.git
+.tmp
+bin
+web/node_modules
+web/test-results
+web/playwright-report
+internal/web/dist/*
+!internal/web/dist/robots.txt
+.env*
