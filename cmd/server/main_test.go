@@ -1,0 +1,209 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"encoding/base64"
+	"fmt"
+	"log/slog"
+	"net"
+	"net/http"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/marquinhosvideo/processosplatdistr/internal/buildinfo"
+)
+
+var key32 = base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef"))
+
+func prodEnv() map[string]string {
+	return map[string]string{
+		"APP_BASE_URL":          "https://processos.exemplo.com.br",
+		"OIDC_ISSUER_URL":       "https://sso.exemplo.com.br/realms/corp",
+		"OIDC_CLIENT_ID":        "processos",
+		"OIDC_CLIENT_SECRET":    "segredo-do-idp",
+		"ROLE_GROUPS_MANAGER":   "gestores",
+		"SESSION_ENC_KEY":       key32,
+		"DEFAULT_ORG_UNIT_CODE": "PLATDIST",
+		"DEFAULT_ORG_UNIT_NAME": "Plataformas de Distribuição",
+	}
+}
+
+func with(env map[string]string, kv ...string) map[string]string {
+	out := map[string]string{}
+	for k, v := range env {
+		out[k] = v
+	}
+	for i := 0; i+1 < len(kv); i += 2 {
+		out[kv[i]] = kv[i+1]
+	}
+	return out
+}
+
+// lockedBuffer é seguro para o servidor escrever enquanto o teste lê.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func runWith(ctx context.Context, envMap map[string]string, args ...string) (int, *lockedBuffer, *lockedBuffer) {
+	stdout, stderr := &lockedBuffer{}, &lockedBuffer{}
+	code := run(ctx, args, env{getenv: func(k string) string { return envMap[k] }, stdout: stdout, stderr: stderr})
+	return code, stdout, stderr
+}
+
+func TestUsage(t *testing.T) {
+	tests := []struct {
+		args       []string
+		code       int
+		wantStdout string
+		wantStderr string
+	}{
+		{nil, exitUsage, "", "Uso: server <comando>"},
+		{[]string{"help"}, exitOK, "Uso: server <comando>", ""},
+		{[]string{"--help"}, exitOK, "config check", ""},
+		{[]string{"desconhecido"}, exitUsage, "", `comando desconhecido "desconhecido"`},
+		{[]string{"config"}, exitUsage, "", "use: server config check"},
+		{[]string{"config", "show"}, exitUsage, "", "use: server config check"},
+		{[]string{"serve", "extra"}, exitUsage, "", "serve não recebe argumentos"},
+		{[]string{"migrate", "up"}, exitError, "", "migrate ainda não está disponível"},
+		{[]string{"jobs", "run", "session_cleanup"}, exitError, "", "jobs ainda não está disponível"},
+	}
+	for _, tt := range tests {
+		code, stdout, stderr := runWith(t.Context(), nil, tt.args...)
+		if code != tt.code {
+			t.Errorf("%v: código %d, want %d", tt.args, code, tt.code)
+		}
+		if tt.wantStdout != "" && !strings.Contains(stdout.String(), tt.wantStdout) {
+			t.Errorf("%v: stdout = %q", tt.args, stdout)
+		}
+		if tt.wantStderr != "" && !strings.Contains(stderr.String(), tt.wantStderr) {
+			t.Errorf("%v: stderr = %q", tt.args, stderr)
+		}
+	}
+}
+
+func TestVersion(t *testing.T) {
+	code, stdout, _ := runWith(t.Context(), nil, "version")
+	if code != exitOK || stdout.String() != buildinfo.Version+"\n" {
+		t.Errorf("código %d, stdout %q", code, stdout)
+	}
+}
+
+func TestConfigCheckAcceptsSecureProduction(t *testing.T) {
+	code, stdout, stderr := runWith(t.Context(), prodEnv(), "config", "check")
+	if code != exitOK || !strings.Contains(stdout.String(), "configuração válida (APP_ENV=production)") {
+		t.Errorf("código %d, stdout %q, stderr %q", code, stdout, stderr)
+	}
+}
+
+func TestConfigCheckRejectsInsecureProduction(t *testing.T) {
+	insecure := with(prodEnv(),
+		"APP_BASE_URL", "http://processos.exemplo.com.br",
+		"OIDC_ISSUER_URL", "https://localhost:9000",
+		"COOKIE_SECURE", "false",
+		"SESSION_ENC_KEY", base64.StdEncoding.EncodeToString([]byte("curta")),
+		"ROLE_GROUPS_MANAGER", "",
+		"DEFAULT_ORG_UNIT_CODE", "",
+	)
+	code, stdout, stderr := runWith(t.Context(), insecure, "config", "check")
+	if code != exitError || stdout.String() != "" {
+		t.Fatalf("código %d, stdout %q", code, stdout)
+	}
+	for _, want := range []string{
+		"configuração inválida:",
+		"  - APP_BASE_URL: deve usar https em produção",
+		"  - OIDC_ISSUER_URL: não pode apontar para localhost em produção",
+		"  - COOKIE_SECURE: false só é permitido com APP_ENV=dev ou test",
+		"  - SESSION_ENC_KEY: deve ter 32 bytes",
+		"  - ROLE_GROUPS_MANAGER: obrigatória",
+		"  - DEFAULT_ORG_UNIT_CODE: obrigatória",
+	} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Errorf("stderr sem %q:\n%s", want, stderr)
+		}
+	}
+	if strings.Contains(stderr.String(), "segredo-do-idp") || strings.Contains(stderr.String(), key32) {
+		t.Error("segredo impresso pelo config check")
+	}
+}
+
+func TestServeRefusesInvalidConfig(t *testing.T) {
+	code, stdout, stderr := runWith(t.Context(), with(prodEnv(), "COOKIE_SECURE", "false"), "serve")
+	if code != exitError || !strings.Contains(stderr.String(), "COOKIE_SECURE") || stdout.String() != "" {
+		t.Errorf("código %d, stdout %q, stderr %q", code, stdout, stderr)
+	}
+}
+
+func freePort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	return ln.Addr().(*net.TCPAddr).Port
+}
+
+func TestServeUntilCanceled(t *testing.T) {
+	prev := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	port := freePort(t)
+	envMap := with(prodEnv(), "PORT", fmt.Sprint(port))
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	stdout, stderr := &lockedBuffer{}, &lockedBuffer{}
+	done := make(chan int, 1)
+	go func() {
+		done <- run(ctx, []string{"serve"}, env{getenv: func(k string) string { return envMap[k] }, stdout: stdout, stderr: stderr})
+	}()
+
+	url := fmt.Sprintf("http://127.0.0.1:%d/healthz", port)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		resp, err := http.Get(url)
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode != 200 {
+				t.Fatalf("/healthz = %d", resp.StatusCode)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("servidor não subiu: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	cancel()
+	select {
+	case code := <-done:
+		if code != exitOK {
+			t.Errorf("código %d, stderr %q", code, stderr)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("serve não encerrou")
+	}
+	logs := stdout.String()
+	if !strings.Contains(logs, `"msg":"server.start"`) || !strings.Contains(logs, `"env":"production"`) {
+		t.Errorf("log de partida ausente: %s", logs)
+	}
+	if strings.Contains(logs, "segredo-do-idp") || strings.Contains(logs, key32) {
+		t.Errorf("segredo no log: %s", logs)
+	}
+}

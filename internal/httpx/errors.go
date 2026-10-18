@@ -16,6 +16,7 @@ const (
 	CodeForbidden            = "forbidden"
 	CodeCSRFFailed           = "csrf_failed"
 	CodeNotFound             = "not_found"
+	CodeMethodNotAllowed     = "method_not_allowed"
 	CodeInvalidTransition    = "invalid_transition"
 	CodeStaleVersion         = "stale_version"
 	CodePossibleDuplicate    = "possible_duplicate"
@@ -51,6 +52,7 @@ var codes = map[string]codeInfo{
 	CodeForbidden:            {http.StatusForbidden, "Sem permissão", "Você não tem permissão para esta ação."},
 	CodeCSRFFailed:           {http.StatusForbidden, "Requisição bloqueada", "A requisição não veio da própria aplicação."},
 	CodeNotFound:             {http.StatusNotFound, "Não encontrado", "Recurso não encontrado."},
+	CodeMethodNotAllowed:     {http.StatusMethodNotAllowed, "Método não permitido", "Este recurso não aceita o método usado."},
 	CodeInvalidTransition:    {http.StatusConflict, "Transição inválida", "A mudança de status não é permitida a partir do status atual."},
 	CodeStaleVersion:         {http.StatusConflict, "Versão desatualizada", "O registro foi alterado por outra pessoa. Recarregue e tente de novo."},
 	CodePossibleDuplicate:    {http.StatusConflict, "Possível duplicidade", "Já existe um cadastro parecido."},
