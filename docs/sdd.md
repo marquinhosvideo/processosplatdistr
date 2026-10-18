@@ -1261,11 +1261,13 @@ O "valor anterior" exigido pelo RNF-07 vem de três lugares:
   | 401 | `unauthenticated`, `session_expired`, `access_revoked` |
   | 403 | `forbidden` (papel, ou objeto visível com ação proibida), `csrf_failed` |
   | 404 | `not_found` (inclui objeto existente mas invisível, e rota atrás de flag desligada) |
+  | 405 | `method_not_allowed` (rota existe com outro método, com header `Allow`; inclui o preflight `OPTIONS`, já que não há CORS) |
   | 409 | `invalid_transition`, `stale_version`, `possible_duplicate`, `quarter_closed`, `quarter_not_open`, `anonymized`, `archived`, `pending_entries`, `pending_changed`, `batch_conflict`, `preview_outdated`, `already_exists` |
   | 413 | `payload_too_large` |
   | 415 | `unsupported_media_type` |
   | 422 | `validation_failed`, `malware_detected` |
   | 429 | `rate_limited` |
+  | 500 | `internal_error` (sem `detail`, só o `requestId`) |
   | 503 | `unavailable` |
 - **Concorrência:**
   - `PUT` exige `version` no corpo; se divergir, 409 `stale_version`;
