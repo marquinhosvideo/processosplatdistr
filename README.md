@@ -20,6 +20,10 @@ make lint                        # vet, staticcheck, govulncheck, deps de produ�
 make help                        # demais alvos
 ```
 
+O `make lint` (e o `make check`) falha se o govulncheck não alcançar
+`vuln.go.dev`. Em rede restrita, `make lint VULNCHECK_OFFLINE_OK=1` troca só essa
+falha por um aviso, e a verificação de vulnerabilidades fica de fora.
+
 O frontend fica em `web/` (Vite + React + Mantine): `pnpm -C web dev` sobe o Vite
 em :5173 com proxy de `/api`, `/auth` e `/s` para o server em :8080, e
 `pnpm -C web build` gera o SPA em `internal/web/dist`, embutido no binário.

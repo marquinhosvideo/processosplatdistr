@@ -85,15 +85,21 @@ vet:
 staticcheck:
 	go tool staticcheck ./...
 
-# Sem acesso ao banco de vulnerabilidades (rede restrita), avisa e segue;
-# qualquer outra falha, inclusive vulnerabilidade encontrada, interrompe.
+# Estrito por padrão: sem acesso ao banco de vulnerabilidades, falha. Em rede
+# restrita, VULNCHECK_OFFLINE_OK=1 troca essa falha (só ela) por um aviso;
+# vulnerabilidade encontrada sempre interrompe.
+VULNCHECK_OFFLINE_OK ?= 0
+
 vulncheck:
 	@out=$$(go tool govulncheck ./... 2>&1); status=$$?; \
+	[ -n "$$out" ] && echo "$$out"; \
 	if [ $$status -ne 0 ] && grep -q 'fetching vulnerabilities' <<<"$$out"; then \
-		echo "AVISO: govulncheck sem acesso a vuln.go.dev; verificação pulada" >&2; \
-	else \
-		[ -n "$$out" ] && echo "$$out"; exit $$status; \
-	fi
+		if [ "$(VULNCHECK_OFFLINE_OK)" = 1 ]; then \
+			echo "AVISO: govulncheck sem acesso a vuln.go.dev; verificação PULADA (VULNCHECK_OFFLINE_OK=1)" >&2; exit 0; \
+		fi; \
+		echo "ERRO: govulncheck sem acesso a vuln.go.dev. Libere a rede ou, ciente de que a verificação não roda, use VULNCHECK_OFFLINE_OK=1" >&2; \
+	fi; \
+	exit $$status
 
 # O IdP mock e a massa de dev nunca podem entrar no binário de produção.
 check-prod-deps:
