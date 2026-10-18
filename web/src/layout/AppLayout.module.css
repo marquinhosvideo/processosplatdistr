@@ -1,0 +1,23 @@
+/* Link "pular para o conteúdo": fora da tela até receber foco pelo teclado. */
+.skipLink {
+  position: absolute;
+  top: 0;
+  left: var(--mantine-spacing-md);
+  z-index: calc(var(--mantine-z-index-app) + 1);
+  padding: var(--mantine-spacing-xs) var(--mantine-spacing-md);
+  background: var(--mantine-color-body);
+  color: var(--mantine-color-anchor);
+  border: 2px solid var(--mantine-primary-color-filled);
+  border-radius: var(--mantine-radius-sm);
+  font-weight: 600;
+  transform: translateY(-120%);
+
+  &:focus {
+    transform: translateY(var(--mantine-spacing-xs));
+  }
+}
+
+.brand {
+  color: var(--mantine-color-text);
+  text-decoration: none;
+}

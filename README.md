@@ -14,9 +14,14 @@ cp .env.example .env             # preencha SESSION_ENC_KEY (head -c 32 /dev/ura
 set -a && . ./.env && set +a
 bin/server config check          # valida a configuração, com as travas de produção
 bin/server serve                 # http://localhost:8080 (/healthz, SPA em qualquer outra rota)
-make test                        # go vet + go test + testes do frontend
+make test                        # go vet + go test + testes do frontend (vitest)
+make e2e                         # Playwright (Chromium de /opt/pw-browsers) contra bin/server
 make lint                        # vet, staticcheck, govulncheck, deps de produção, eslint, tsc
 make help                        # demais alvos
 ```
+
+O frontend fica em `web/` (Vite + React + Mantine): `pnpm -C web dev` sobe o Vite
+em :5173 com proxy de `/api`, `/auth` e `/s` para o server em :8080, e
+`pnpm -C web build` gera o SPA em `internal/web/dist`, embutido no binário.
 
 Deploy no Tsuru por Dockerfile: ver §10 do SDD.
