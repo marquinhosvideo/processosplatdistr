@@ -68,6 +68,19 @@ describe('request', () => {
     expect(new Headers(init.headers).get('Content-Type')).toBe('application/json');
   });
 
+  it.each([
+    ['DELETE', () => api.delete('/api/v1/coisas/1')],
+    ['POST sem corpo', () => api.post('/api/v1/notifications/read-all')],
+  ])('%s também manda Content-Type JSON, que o servidor exige em toda escrita', async (_name, send) => {
+    const fetchFn = mockFetch(respond(204));
+
+    await send();
+
+    const [, init] = call(fetchFn);
+    expect(init.body).toBeUndefined();
+    expect(new Headers(init.headers).get('Content-Type')).toBe('application/json');
+  });
+
   it('devolve undefined para 204 sem corpo', async () => {
     mockFetch(respond(204));
     await expect(api.delete('/api/v1/coisas/1')).resolves.toBeUndefined();

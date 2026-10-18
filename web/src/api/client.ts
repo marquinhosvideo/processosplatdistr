@@ -141,9 +141,12 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   let payload: BodyInit | undefined;
   if (body instanceof FormData) {
     payload = body; // o navegador define o boundary do multipart
-  } else if (body !== undefined) {
-    headers.set('Content-Type', 'application/json');
-    payload = JSON.stringify(body);
+  } else {
+    // O servidor exige application/json em toda escrita, mesmo sem corpo
+    // (DELETE, POST /notifications/read-all), ou responde 415: é parte da
+    // defesa contra CSRF por "simple request".
+    if (method !== 'GET') headers.set('Content-Type', 'application/json');
+    if (body !== undefined) payload = JSON.stringify(body);
   }
 
   let res: Response;
