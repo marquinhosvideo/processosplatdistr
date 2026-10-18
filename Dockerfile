@@ -17,7 +17,9 @@ COPY cmd/ cmd/
 COPY internal/ internal/
 COPY migrations/ migrations/
 COPY --from=web /src/internal/web/dist/ internal/web/dist/
-ARG VERSION=dev
+# O "tsuru app deploy" não passa --build-arg: com VERSION vazia, a versão é o
+# sha256 do próprio binário (internal/buildinfo), que muda a cada build.
+ARG VERSION=
 RUN go build -trimpath -ldflags="-s -w -X github.com/marquinhosvideo/processosplatdistr/internal/buildinfo.Version=${VERSION}" \
     -o /out/server ./cmd/server
 

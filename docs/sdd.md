@@ -2031,7 +2031,9 @@ COPY cmd/ cmd/
 COPY internal/ internal/
 COPY migrations/ migrations/
 COPY --from=web /src/internal/web/dist/ internal/web/dist/
-ARG VERSION=dev
+# O "tsuru app deploy" não passa --build-arg: com VERSION vazia, a versão é o
+# sha256 do próprio binário (internal/buildinfo), que muda a cada build.
+ARG VERSION=
 RUN go build -trimpath -ldflags="-s -w -X github.com/marquinhosvideo/processosplatdistr/internal/buildinfo.Version=${VERSION}" \
     -o /out/server ./cmd/server
 
@@ -2047,6 +2049,7 @@ CMD ["/usr/local/bin/server", "serve"]
 ```
 
 - Base Alpine (com shell) para que `tsuru app run` e `tsuru app shell` funcionem.
+- **Versão** (`X-App-Version`, `/healthz`): o `make build` e o `make docker` gravam o sha do commit via `-X …buildinfo.Version`. O `tsuru app deploy` não passa `--build-arg` e o `.git` fica fora do contexto, então nesse caminho a versão é `bin-<12 hex do sha256 do executável>`: muda a cada build com conteúdo diferente, e o aviso "Nova versão disponível" continua funcionando.
 - `WORKDIR /home/application/current` é a convenção do Tsuru para encontrar `Procfile` e `tsuru.yaml`.
 - As imagens base são fixadas por digest no M10.
 - `.dockerignore`: `.git`, `.tmp`, `bin`, `web/node_modules`, `web/test-results`, `web/playwright-report`, `internal/web/dist/*`, `!internal/web/dist/robots.txt`, `.env*`.
