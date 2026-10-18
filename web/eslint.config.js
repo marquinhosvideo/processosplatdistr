@@ -5,20 +5,7 @@ import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
 // HTML vindo de dado nunca é injetado: tudo é renderizado como texto (XSS).
-const noRawHTML = [
-  {
-    selector: "JSXAttribute[name.name='dangerouslySetInnerHTML']",
-    message: 'dangerouslySetInnerHTML é proibido: renderize o conteúdo como texto.',
-  },
-  {
-    selector: "Property[key.name='dangerouslySetInnerHTML']",
-    message: 'dangerouslySetInnerHTML é proibido: renderize o conteúdo como texto.',
-  },
-  {
-    selector: "AssignmentExpression > MemberExpression.left[property.name=/^(innerHTML|outerHTML)$/]",
-    message: 'Atribuir innerHTML/outerHTML é proibido: use textContent ou elementos React.',
-  },
-];
+import { noRawHTML } from './lint/no-raw-html.js';
 
 export default defineConfig([
   globalIgnores(['node_modules/', 'coverage/', 'playwright-report/', 'test-results/', 'blob-report/']),
