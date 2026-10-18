@@ -35,11 +35,16 @@ help: ## lista os alvos
 
 build: web-build go-build ## SPA (internal/web/dist) + bin/server e auxiliares
 
+ifeq ($(wildcard web/package.json),)
+web-deps:
+	@echo "ERRO: web/package.json ausente; o frontend (web/) não existe neste checkout" >&2; exit 1
+else
+web-deps: web/node_modules/.modules.yaml ## instala as dependências do frontend
+endif
+
 web/node_modules/.modules.yaml: web/package.json web/pnpm-lock.yaml
 	$(PNPM) -C web install --frozen-lockfile
 	@touch $@
-
-web-deps: web/node_modules/.modules.yaml ## instala as dependências do frontend
 
 web-build: web-deps ## compila o SPA para internal/web/dist
 	$(PNPM) -C web build
