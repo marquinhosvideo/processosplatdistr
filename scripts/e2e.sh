@@ -16,9 +16,18 @@ export PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 
 make build
 
-# A massa do E2E chega com o devseed; até lá os specs não dependem do banco.
-if [ -x bin/devseed ]; then
-  bin/devseed -dsn "${TEST_MYSQL_DSN:-app:app@tcp(127.0.0.1:3306)/}" -db app_e2e -reset -profile e2e
+# O server do E2E usa o banco app_e2e (web/playwright.config.ts) e aplica as
+# migrations na subida. Com E2E_DATABASE_DSN, o banco é por conta de quem
+# chama; senão, o MySQL local sobe (ou é reaproveitado) e o banco é recriado.
+if [ -z "${E2E_DATABASE_DSN:-}" ]; then
+  scripts/mysql-local.sh start
+  if [ -x bin/devseed ]; then
+    bin/devseed -dsn "${TEST_MYSQL_DSN:-app:app@tcp(127.0.0.1:3306)/}" -db app_e2e -reset -profile e2e
+  else
+    # Até o devseed existir, o E2E começa de um banco vazio.
+    MYSQL_PWD=app mysql --no-defaults --protocol=TCP -h127.0.0.1 -P3306 -uapp \
+      -e 'DROP DATABASE IF EXISTS app_e2e; CREATE DATABASE app_e2e'
+  fi
 fi
 
 # Nunca "playwright install": o Chromium já está em PLAYWRIGHT_BROWSERS_PATH.

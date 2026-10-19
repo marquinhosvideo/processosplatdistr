@@ -3,6 +3,7 @@
 package server
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"time"
@@ -17,6 +18,9 @@ type Deps struct {
 	Config *config.Config
 	Logger *slog.Logger
 	SPA    http.Handler
+	// Ready responde o /readyz: pinga o banco e devolve a versão do schema,
+	// com erro se o banco não responde ou o schema não serve a este binário.
+	Ready func(ctx context.Context) (schemaVersion uint32, err error)
 }
 
 // New devolve o handler raiz:
@@ -33,7 +37,7 @@ func New(d Deps) http.Handler {
 		httpx.AssignRequestID(d.Logger),
 		httpx.AppVersion(buildinfo.Version),
 		httpx.SecurityHeaders(d.Config.HTTPS()),
-		httpx.AccessLog("GET /healthz"),
+		httpx.AccessLog("GET /healthz", "GET /readyz"),
 	)
 }
 

@@ -45,8 +45,9 @@ func writeProblem(w http.ResponseWriter, r *http.Request, e *Error) {
 	if id := RequestID(r.Context()); id != "" {
 		body["requestId"] = id
 	}
-	// O 500 nunca expõe detalhe nem extensões (§4.1).
-	if e.Status < http.StatusInternalServerError {
+	// O 500 nunca expõe detalhe nem extensões (§4.1); o 503 explica o que
+	// está indisponível, com detalhe escrito para isso (a causa fica no log).
+	if e.Status != http.StatusInternalServerError {
 		if e.Detail != "" {
 			body["detail"] = e.Detail
 		}

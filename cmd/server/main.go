@@ -72,9 +72,11 @@ func run(ctx context.Context, args []string, e env) int {
 			return usageError(e, "use: server config check")
 		}
 		return configCheck(e)
-	case "migrate", "jobs":
-		// O dispatcher já conhece os comandos; a implementação chega com o
-		// banco (migrate) e com o runner de jobs.
+	case "migrate":
+		return migrateCmd(ctx, e, rest)
+	case "jobs":
+		// O dispatcher já conhece o comando; a implementação chega com o
+		// runner de jobs.
 		fmt.Fprintf(e.stderr, "server: o comando %s ainda não está disponível nesta versão\n", cmd)
 		return exitError
 	case "help", "-h", "--help":
@@ -129,12 +131,21 @@ func serve(ctx context.Context, e env) int {
 	logger := app.NewLogger(e.stdout, cfg.LogLevel)
 	logger.LogAttrs(ctx, slog.LevelInfo, "server.start", append(cfg.LogAttrs(), slog.String("version", buildinfo.Version))...)
 
+	// Banco, migrations e bootstrap antes de abrir a porta: o healthcheck só
+	// responde quando a unidade está pronta (§10.3).
+	a, err := app.Start(ctx, cfg, logger)
+	if err != nil {
+		logger.Error("server.start_failed", slog.Any("err", err))
+		return exitError
+	}
+	defer a.Close()
+
 	ln, err := net.Listen("tcp", net.JoinHostPort("", strconv.Itoa(cfg.Port)))
 	if err != nil {
 		logger.Error("server.listen_failed", slog.Any("err", err))
 		return exitError
 	}
-	if err := app.Serve(ctx, cfg, logger, ln); err != nil {
+	if err := a.Serve(ctx, ln); err != nil {
 		logger.Error("server.failed", slog.Any("err", err))
 		return exitError
 	}

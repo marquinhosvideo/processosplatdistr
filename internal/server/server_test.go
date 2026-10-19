@@ -2,8 +2,11 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -11,9 +14,11 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/marquinhosvideo/processosplatdistr/internal/buildinfo"
 	"github.com/marquinhosvideo/processosplatdistr/internal/config"
+	"github.com/marquinhosvideo/processosplatdistr/internal/db/migrate"
 	"github.com/marquinhosvideo/processosplatdistr/internal/httpx"
 	"github.com/marquinhosvideo/processosplatdistr/internal/web"
 )
@@ -106,6 +111,45 @@ func TestHealthz(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), `"route":"GET /healthz"`) || !strings.Contains(logs.String(), `"level":"DEBUG","msg":"http.request"`) {
 		t.Errorf("log do healthcheck: %s", logs.String())
+	}
+}
+
+func TestReadyz(t *testing.T) {
+	behind := fmt.Errorf("x: %w", migrate.ErrBehind)
+	tests := []struct {
+		name       string
+		ready      func(context.Context) (uint32, error)
+		status     int
+		wantBody   string
+		wantDetail string
+	}{
+		{"pronto", func(context.Context) (uint32, error) { return 7, nil }, 200, `"schemaVersion":7`, ""},
+		{"banco fora", func(context.Context) (uint32, error) { return 0, errors.New("dial tcp: refused") }, 503, `"code":"unavailable"`, "Banco de dados indisponível."},
+		{"schema atrasado", func(context.Context) (uint32, error) { return 1, behind }, 503, `"schemaVersion":1`, "O schema do banco não é compatível com esta versão da aplicação."},
+		{"sem banco", nil, 503, `"code":"unavailable"`, "Banco de dados não configurado."},
+		{"ping lento", func(ctx context.Context) (uint32, error) {
+			<-ctx.Done() // o limite de 1 s vem do handler
+			return 0, ctx.Err()
+		}, 503, `"code":"unavailable"`, "Banco de dados indisponível."},
+	}
+	for _, tt := range tests {
+		var logs bytes.Buffer
+		spa, _ := web.New(fstest.MapFS{"index.html": {Data: []byte(indexHTML)}})
+		h := New(Deps{Config: testConfig(t), Logger: slog.New(slog.NewJSONHandler(&logs, nil)), SPA: spa, Ready: tt.ready})
+		start := time.Now()
+		rec := do(h, "GET", "/readyz")
+		if rec.Code != tt.status || !strings.Contains(rec.Body.String(), tt.wantBody) || rec.Header().Get("Cache-Control") != "no-store" {
+			t.Errorf("%s: %d %s %v", tt.name, rec.Code, rec.Body, rec.Header())
+		}
+		if tt.wantDetail != "" && !strings.Contains(rec.Body.String(), `"detail":"`+tt.wantDetail+`"`) {
+			t.Errorf("%s: detalhe ausente em %s", tt.name, rec.Body)
+		}
+		if strings.Contains(rec.Body.String(), "refused") {
+			t.Errorf("%s: causa vazou no corpo", tt.name)
+		}
+		if time.Since(start) > 2*time.Second {
+			t.Errorf("%s: sem o timeout de 1 s", tt.name)
+		}
 	}
 }
 
@@ -214,7 +258,7 @@ func TestEveryRegisteredRouteIsKnown(t *testing.T) {
 			t.Errorf("rota %q sem portão", p)
 		}
 	}
-	for _, want := range []string{"GET /healthz", apiRootPattern, apiFallbackPattern, spaPattern} {
+	for _, want := range []string{"GET /healthz", "GET /readyz", apiRootPattern, apiFallbackPattern, spaPattern} {
 		if !slices.Contains(rt.patterns, want) {
 			t.Errorf("rota %q ausente", want)
 		}

@@ -131,6 +131,20 @@ func TestWriteErrorInternalHidesEverything(t *testing.T) {
 	}
 }
 
+func TestWriteErrorUnavailableShowsDetailNotCause(t *testing.T) {
+	var buf bytes.Buffer
+	rec := httptest.NewRecorder()
+	WriteError(rec, newReq("GET", "/readyz", &buf), E(CodeUnavailable).WithDetail("Banco de dados indisponível.").
+		With("schemaVersion", 3).WithCause(errors.New("dial tcp 10.0.0.5:3306: segredo-interno")))
+	body := decodeProblem(t, rec)
+	if rec.Code != 503 || body["detail"] != "Banco de dados indisponível." || body["schemaVersion"] != float64(3) {
+		t.Errorf("503 = %d %v", rec.Code, body)
+	}
+	if strings.Contains(rec.Body.String(), "segredo-interno") || !strings.Contains(buf.String(), "segredo-interno") {
+		t.Errorf("causa deve ir só para o log: corpo %s", rec.Body)
+	}
+}
+
 func TestWriteErrorMaxBytes(t *testing.T) {
 	var logs bytes.Buffer
 	rec := httptest.NewRecorder()

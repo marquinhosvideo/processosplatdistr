@@ -6,16 +6,20 @@ e arquitetura em [`docs/sdd.md`](docs/sdd.md).
 
 ## Desenvolvimento
 
-Requer Go 1.24 (`GOTOOLCHAIN=local`), Node 22 e pnpm 10.
+Requer Go 1.24 (`GOTOOLCHAIN=local`), Node 22, pnpm 10 e MySQL 8 (>= 8.0.16).
 
 ```bash
+make mysql                       # MySQL local em 127.0.0.1:3306 (app/app); instala na 1ª vez
 make build                       # SPA em internal/web/dist + bin/server
 cp .env.example .env             # preencha SESSION_ENC_KEY (head -c 32 /dev/urandom | base64)
 set -a && . ./.env && set +a
+MYSQL_PWD=app mysql --no-defaults --protocol=TCP -h127.0.0.1 -uapp -e 'CREATE DATABASE IF NOT EXISTS app_dev'
 bin/server config check          # valida a configuração, com as travas de produção
-bin/server serve                 # http://localhost:8080 (/healthz, SPA em qualquer outra rota)
+bin/server serve                 # aplica as migrations e sobe em http://localhost:8080 (/healthz, /readyz)
+bin/server migrate status        # situação de cada migration (também: migrate up, migrate force N)
 make test                        # go vet + go test + testes do frontend (vitest)
-make e2e                         # Playwright (Chromium de /opt/pw-browsers) contra bin/server
+make test-int                    # go test com TEST_MYSQL_DSN: um banco t_<pacote>_<pid> por pacote
+make e2e                         # Playwright (Chromium de /opt/pw-browsers) contra bin/server e o banco app_e2e
 make lint                        # vet, staticcheck, govulncheck, deps de produção, eslint, tsc
 make help                        # demais alvos
 ```

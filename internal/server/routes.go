@@ -1,13 +1,16 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/marquinhosvideo/processosplatdistr/internal/buildinfo"
+	"github.com/marquinhosvideo/processosplatdistr/internal/db/migrate"
 	"github.com/marquinhosvideo/processosplatdistr/internal/httpx"
 )
 
@@ -66,6 +69,7 @@ func (rt *router) public(pattern string, h http.Handler) {
 // routes monta a tabela. Novas rotas entram aqui, sempre pelo router.
 func routes(rt *router, d Deps) {
 	rt.public("GET /healthz", httpx.NoStore(httpx.HandlerFunc(healthz)))
+	rt.public("GET /readyz", httpx.NoStore(readyz(d.Ready)))
 
 	api := httpx.NoStore(apiFallback(rt.mux))
 	rt.handle(apiRootPattern, api)
@@ -78,6 +82,32 @@ func routes(rt *router, d Deps) {
 func healthz(w http.ResponseWriter, r *http.Request) error {
 	httpx.WriteJSON(w, r, http.StatusOK, map[string]string{"status": "ok", "version": buildinfo.Version})
 	return nil
+}
+
+// ReadyTimeout limita o ping e a leitura do schema no /readyz.
+const ReadyTimeout = time.Second
+
+// readyz é a prontidão para monitoração e E2E: banco respondendo em até 1 s
+// e schema compatível com o binário. Falha vira 503 sem a causa, que só vai
+// para o log.
+func readyz(ready func(context.Context) (uint32, error)) http.Handler {
+	return httpx.HandlerFunc(func(w http.ResponseWriter, r *http.Request) error {
+		if ready == nil {
+			return httpx.E(httpx.CodeUnavailable).WithDetail("Banco de dados não configurado.")
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), ReadyTimeout)
+		defer cancel()
+		v, err := ready(ctx)
+		switch {
+		case migrate.IsSchemaProblem(err):
+			return httpx.E(httpx.CodeUnavailable).WithCause(err).With("schemaVersion", v).
+				WithDetail("O schema do banco não é compatível com esta versão da aplicação.")
+		case err != nil:
+			return httpx.E(httpx.CodeUnavailable).WithCause(err).WithDetail("Banco de dados indisponível.")
+		}
+		httpx.WriteJSON(w, r, http.StatusOK, map[string]any{"status": "ok", "version": buildinfo.Version, "schemaVersion": v})
+		return nil
+	})
 }
 
 // Métodos testados para decidir entre 404 e 405.

@@ -8,13 +8,17 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/marquinhosvideo/processosplatdistr/internal/buildinfo"
+	"github.com/marquinhosvideo/processosplatdistr/internal/db/dbtest"
 )
+
+func TestMain(m *testing.M) { dbtest.Main(m) }
 
 // key32 veio de /dev/urandom: produção recusa chaves fracas ou públicas.
 const key32 = "3rHfT+ZqQuL8jt++3hq0AHro93k8LoMpV3oz7kbWbe8="
@@ -82,7 +86,11 @@ func TestUsage(t *testing.T) {
 		{[]string{"config"}, exitUsage, "", "use: server config check"},
 		{[]string{"config", "show"}, exitUsage, "", "use: server config check"},
 		{[]string{"serve", "extra"}, exitUsage, "", "serve não recebe argumentos"},
-		{[]string{"migrate", "up"}, exitError, "", "migrate ainda não está disponível"},
+		{[]string{"migrate", "down"}, exitUsage, "", "use: server migrate [up|status|force N]"},
+		{[]string{"migrate", "force"}, exitUsage, "", "use: server migrate [up|status|force N]"},
+		{[]string{"migrate", "force", "x"}, exitUsage, "", `versão inválida "x"`},
+		{[]string{"migrate", "force", "0"}, exitUsage, "", `versão inválida "0"`},
+		{[]string{"migrate", "up", "extra"}, exitUsage, "", "use: server migrate"},
 		{[]string{"jobs", "run", "session_cleanup"}, exitError, "", "jobs ainda não está disponível"},
 	}
 	for _, tt := range tests {
@@ -173,12 +181,14 @@ func freePort(t *testing.T) int {
 	return ln.Addr().(*net.TCPAddr).Port
 }
 
+// TestServeUntilCanceled sobe o serve de verdade contra um banco vazio: as
+// migrations rodam na subida (MIGRATE_ON_START=true é o padrão).
 func TestServeUntilCanceled(t *testing.T) {
 	prev := slog.Default()
 	t.Cleanup(func() { slog.SetDefault(prev) })
 
 	port := freePort(t)
-	envMap := with(prodEnv(), "PORT", fmt.Sprint(port))
+	envMap := with(prodEnv(), "PORT", fmt.Sprint(port), "DATABASE_DSN", dbtest.DSN(dbtest.NewDatabase(t)))
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	stdout, stderr := &lockedBuffer{}, &lockedBuffer{}
@@ -187,14 +197,14 @@ func TestServeUntilCanceled(t *testing.T) {
 		done <- run(ctx, []string{"serve"}, env{getenv: func(k string) string { return envMap[k] }, stdout: stdout, stderr: stderr})
 	}()
 
-	url := fmt.Sprintf("http://127.0.0.1:%d/healthz", port)
-	deadline := time.Now().Add(5 * time.Second)
+	url := fmt.Sprintf("http://127.0.0.1:%d/readyz", port)
+	deadline := time.Now().Add(20 * time.Second)
 	for {
 		resp, err := http.Get(url)
 		if err == nil {
 			resp.Body.Close()
 			if resp.StatusCode != 200 {
-				t.Fatalf("/healthz = %d", resp.StatusCode)
+				t.Fatalf("/readyz = %d", resp.StatusCode)
 			}
 			break
 		}
@@ -219,5 +229,55 @@ func TestServeUntilCanceled(t *testing.T) {
 	}
 	if strings.Contains(logs, "segredo-do-idp") || strings.Contains(logs, key32) {
 		t.Errorf("segredo no log: %s", logs)
+	}
+}
+
+func TestServeRefusesSchemaBehindWithoutMigrateOnStart(t *testing.T) {
+	envMap := with(prodEnv(), "PORT", fmt.Sprint(freePort(t)), "MIGRATE_ON_START", "false",
+		"DATABASE_DSN", dbtest.DSN(dbtest.NewDatabase(t)))
+	code, stdout, _ := runWith(t.Context(), envMap, "serve")
+	if code != exitError {
+		t.Fatalf("código %d, want %d", code, exitError)
+	}
+	logs := stdout.String()
+	if !strings.Contains(logs, `"msg":"server.start_failed"`) || !strings.Contains(logs, "schema atrás do binário") ||
+		strings.Contains(logs, "server.listening") {
+		t.Errorf("logs = %s", logs)
+	}
+	if strings.Contains(logs, "senha") || strings.Contains(logs, "app:app@") {
+		t.Errorf("DSN no log: %s", logs)
+	}
+}
+
+func TestMigrateCommands(t *testing.T) {
+	// Pela URL mysql://, o formato que o bind do DBaaS injeta.
+	mc := dbtest.NewDatabase(t)
+	envMap := with(prodEnv(), "DATABASE_DSN", "", "DATABASE_URL",
+		fmt.Sprintf("mysql://%s:%s@%s/%s", mc.User, mc.Passwd, mc.Addr, mc.DBName))
+	row := regexp.MustCompile
+
+	code, stdout, stderr := runWith(t.Context(), envMap, "migrate", "status")
+	if code != exitOK || !row(`0001 +core +pendente`).MatchString(stdout.String()) || !strings.Contains(stdout.String(), "schema atrás do binário") {
+		t.Fatalf("status antes: %d\n%s\n%s", code, stdout, stderr)
+	}
+	code, stdout, stderr = runWith(t.Context(), envMap, "migrate")
+	if code != exitOK || !strings.Contains(stdout.String(), "aplicada 0001_core.sql") {
+		t.Fatalf("up: %d\n%s\n%s", code, stdout, stderr)
+	}
+	code, stdout, _ = runWith(t.Context(), envMap, "migrate", "up")
+	if code != exitOK || !strings.Contains(stdout.String(), "nada a aplicar") {
+		t.Errorf("up de novo: %d %s", code, stdout)
+	}
+	code, stdout, _ = runWith(t.Context(), envMap, "migrate", "status")
+	if code != exitOK || !row(`0001 +core +aplicada +\d{4}-`).MatchString(stdout.String()) || !strings.Contains(stdout.String(), "situação: schema na versão") {
+		t.Errorf("status depois: %d\n%s", code, stdout)
+	}
+	code, stdout, _ = runWith(t.Context(), envMap, "migrate", "force", "1")
+	if code != exitOK || !strings.Contains(stdout.String(), "versão 0001 marcada como aplicada e limpa") {
+		t.Errorf("force: %d %s", code, stdout)
+	}
+	code, _, stderr = runWith(t.Context(), envMap, "migrate", "force", "999")
+	if code != exitError || !strings.Contains(stderr.String(), "não existe neste binário") {
+		t.Errorf("force inexistente: %d %s", code, stderr)
 	}
 }
