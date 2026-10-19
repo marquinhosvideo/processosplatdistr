@@ -1,6 +1,7 @@
 # Alvos de desenvolvimento, teste e build (SDD §9.2). Requer Go 1.24 e, para o
-# frontend, Node 22 + pnpm 10. Alvos de marcos futuros avisam e saem sem erro
-# até o script correspondente existir.
+# frontend, Node 22 + pnpm 10; os testes de integração e o E2E usam o MySQL 8
+# local (make mysql). Alvos de marcos futuros avisam e saem sem erro até o
+# script correspondente existir.
 
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
@@ -26,7 +27,7 @@ AUX_CMDS := $(filter-out server,$(notdir $(wildcard cmd/*)))
 
 .PHONY: help build web-deps web-build go-build test test-go test-web test-int \
 	lint vet staticcheck vulncheck check-prod-deps lint-web check \
-	mysql seed dev e2e docker clean
+	mysql mysql-stop mysql-status seed dev e2e docker clean
 
 help: ## lista os alvos
 	@grep -hE '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
@@ -66,6 +67,7 @@ test-go:
 test-web: web-deps
 	$(PNPM) -C web test --run
 
+# Cada pacote cria o seu banco t_<pacote>_<pid> (internal/db/dbtest).
 test-int: ## testes de integração com MySQL (make mysql antes)
 	TEST_MYSQL_DSN='$(TEST_MYSQL_DSN)' go test -count=1 -p 4 ./...
 
@@ -114,9 +116,14 @@ lint-web: web-deps
 
 ## --- ambiente local ---
 
-mysql: ## sobe o MySQL 8 local (scripts/mysql-local.sh start)
-	@if [ -x scripts/mysql-local.sh ]; then scripts/mysql-local.sh start; \
-	else echo "AVISO: scripts/mysql-local.sh ainda não existe; MySQL local ainda não implementado" >&2; fi
+mysql: ## sobe o MySQL 8 local em 127.0.0.1:3306 (instala na primeira vez; reaproveita se já estiver no ar)
+	scripts/mysql-local.sh start
+
+mysql-stop: ## derruba o MySQL local subido por make mysql
+	scripts/mysql-local.sh stop
+
+mysql-status: ## informa se o MySQL local responde
+	scripts/mysql-local.sh status
 
 seed: ## recria o banco de dev com a massa do devseed
 	@if [ -d cmd/devseed ]; then go run ./cmd/devseed -dsn '$(TEST_MYSQL_DSN)' -db $(MYSQL_DEV_DB) -reset -profile dev; \
