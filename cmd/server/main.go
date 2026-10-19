@@ -19,6 +19,7 @@ import (
 	"github.com/marquinhosvideo/processosplatdistr/internal/app"
 	"github.com/marquinhosvideo/processosplatdistr/internal/buildinfo"
 	"github.com/marquinhosvideo/processosplatdistr/internal/config"
+	"github.com/marquinhosvideo/processosplatdistr/internal/db"
 )
 
 const usage = `Uso: server <comando>
@@ -89,11 +90,15 @@ func usageError(e env, msg string) int {
 	return exitUsage
 }
 
-// loadConfig carrega e valida; os problemas vão para stderr, um por linha.
+// loadConfig carrega e valida, inclusive o formato dos DSNs do banco; os
+// problemas vão para stderr, um por linha.
 func loadConfig(e env) (*config.Config, bool) {
 	cfg, err := config.FromEnv(e.getenv)
 	if err == nil {
-		return cfg, true
+		if _, _, err = db.FromConfig(cfg); err == nil {
+			return cfg, true
+		}
+		err = &config.Error{Problems: []string{err.Error()}}
 	}
 	var ce *config.Error
 	if errors.As(err, &ce) {

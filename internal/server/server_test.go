@@ -30,6 +30,7 @@ func testConfig(t *testing.T, kv ...string) *config.Config {
 		"SESSION_ENC_KEY":       base64.StdEncoding.EncodeToString(make([]byte, 32)),
 		"DEFAULT_ORG_UNIT_CODE": "PLATDIST",
 		"DEFAULT_ORG_UNIT_NAME": "Plataformas de Distribuição",
+		"DATABASE_DSN":          "app:app@tcp(127.0.0.1:3306)/app",
 	}
 	for i := 0; i+1 < len(kv); i += 2 {
 		env[kv[i]] = kv[i+1]

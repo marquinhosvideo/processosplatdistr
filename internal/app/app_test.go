@@ -47,6 +47,7 @@ func testConfig(t *testing.T) *config.Config {
 		"SESSION_ENC_KEY":       base64.StdEncoding.EncodeToString(make([]byte, 32)),
 		"DEFAULT_ORG_UNIT_CODE": "PLATDIST",
 		"DEFAULT_ORG_UNIT_NAME": "Plataformas de Distribuição",
+		"DATABASE_DSN":          "app:app@tcp(127.0.0.1:3306)/app",
 	}
 	cfg, err := config.FromEnv(func(k string) string { return env[k] })
 	if err != nil {

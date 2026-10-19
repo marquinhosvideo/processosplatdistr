@@ -36,6 +36,7 @@ func devEnv() map[string]string {
 		"SESSION_ENC_KEY":       devKey,
 		"DEFAULT_ORG_UNIT_CODE": "PLATDIST",
 		"DEFAULT_ORG_UNIT_NAME": "Plataformas de Distribuição",
+		"DATABASE_DSN":          "app:app@tcp(127.0.0.1:3306)/app_dev",
 	}
 }
 
@@ -172,12 +173,24 @@ func TestParsing(t *testing.T) {
 }
 
 func TestDatabaseURLEnvIndirection(t *testing.T) {
-	c, err := load(with(devEnv(), "DATABASE_URL_ENV", "DBAAS_MYSQL_ENDPOINT", "DBAAS_MYSQL_ENDPOINT", "mysql://u:p@db:3306/app"))
+	c, err := load(with(devEnv(), "DATABASE_DSN", "", "DATABASE_URL_ENV", "DBAAS_MYSQL_ENDPOINT", "DBAAS_MYSQL_ENDPOINT", "mysql://u:p@db:3306/app"))
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if c.DatabaseURL.Reveal() != "mysql://u:p@db:3306/app" {
-		t.Errorf("DatabaseURL = %q", c.DatabaseURL.Reveal())
+	if c.DatabaseURL.Reveal() != "mysql://u:p@db:3306/app" || c.DatabaseDSN.IsSet() {
+		t.Errorf("DatabaseURL = %q, DSN = %q", c.DatabaseURL.Reveal(), c.DatabaseDSN.Reveal())
+	}
+}
+
+func TestDatabaseRequired(t *testing.T) {
+	_, err := load(with(devEnv(), "DATABASE_DSN", "", "DATABASE_URL_ENV", "DBAAS_MYSQL_ENDPOINT"))
+	want := "DATABASE_DSN: obrigatória (ou a URL mysql:// do banco na variável DBAAS_MYSQL_ENDPOINT)"
+	if got := problems(t, err); !slices.Contains(got, want) {
+		t.Errorf("problemas = %q, want %q", got, want)
+	}
+	// A URL na variável padrão basta.
+	if _, err := load(with(devEnv(), "DATABASE_DSN", "", "DATABASE_URL", "mysql://u:p@db/app")); err != nil {
+		t.Errorf("URL em DATABASE_URL recusada: %v", err)
 	}
 }
 

@@ -29,6 +29,7 @@ func prodEnv() map[string]string {
 		"SESSION_ENC_KEY":       key32,
 		"DEFAULT_ORG_UNIT_CODE": "PLATDIST",
 		"DEFAULT_ORG_UNIT_NAME": "Plataformas de Distribuição",
+		"DATABASE_DSN":          "app:app@tcp(127.0.0.1:3306)/app",
 	}
 }
 
@@ -140,6 +141,18 @@ func TestConfigCheckRejectsInsecureProduction(t *testing.T) {
 	}
 	if strings.Contains(stderr.String(), "segredo-do-idp") || strings.Contains(stderr.String(), key32) {
 		t.Error("segredo impresso pelo config check")
+	}
+}
+
+func TestConfigCheckRejectsMalformedDatabaseURL(t *testing.T) {
+	env := with(prodEnv(), "DATABASE_DSN", "", "DATABASE_URL_ENV", "DBAAS_MYSQL_ENDPOINT",
+		"DBAAS_MYSQL_ENDPOINT", "mysql://app:senha-do-banco@db:porta/app")
+	code, _, stderr := runWith(t.Context(), env, "config", "check")
+	if code != exitError || !strings.Contains(stderr.String(), "  - DBAAS_MYSQL_ENDPOINT: URL do banco inválida") {
+		t.Errorf("código %d, stderr %q", code, stderr)
+	}
+	if strings.Contains(stderr.String(), "senha-do-banco") {
+		t.Error("senha do banco impressa pelo config check")
 	}
 }
 

@@ -253,6 +253,9 @@ func (c *Config) validate(v *parser) {
 		v.add("APP_BASE_URL", "deve conter só esquema, host e porta (sem caminho, query ou fragmento)")
 	}
 
+	if !c.DatabaseDSN.IsSet() && !c.DatabaseURL.IsSet() {
+		v.add("DATABASE_DSN", "obrigatória (ou a URL mysql:// do banco na variável %s)", c.DatabaseURLEnv)
+	}
 	if c.DBTLSCAPEM != "" && !x509.NewCertPool().AppendCertsFromPEM([]byte(c.DBTLSCAPEM)) {
 		v.add("DB_TLS_CA_PEM", "nenhum certificado PEM válido")
 	}
