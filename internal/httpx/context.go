@@ -11,6 +11,7 @@ const (
 	requestIDKey ctxKey = iota
 	loggerKey
 	logStateKey
+	clientIPKey
 )
 
 // RequestID devolve o ID da requisição corrente (16 hex), ou "" fora de uma
@@ -46,4 +47,16 @@ func SetUserID(ctx context.Context, userID int64) {
 	if st, ok := ctx.Value(logStateKey).(*logState); ok {
 		st.userID = userID
 	}
+}
+
+// WithClientIP guarda o IP do cliente já resolvido (X-Forwarded-For só de
+// TRUSTED_PROXY_CIDRS) para auditoria e rate limit.
+func WithClientIP(ctx context.Context, ip string) context.Context {
+	return context.WithValue(ctx, clientIPKey, ip)
+}
+
+// ClientIP devolve o IP guardado por WithClientIP, ou "".
+func ClientIP(ctx context.Context) string {
+	ip, _ := ctx.Value(clientIPKey).(string)
+	return ip
 }
