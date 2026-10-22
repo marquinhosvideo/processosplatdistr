@@ -13,6 +13,19 @@ Instale também o **ffmpeg** (recomendado). Sem ele a qualidade fica limitada (g
 - macOS: `brew install ffmpeg`
 - Linux: `sudo apt install ffmpeg`
 
+### macOS
+
+O Python que vem no macOS é o 3.9, e o yt-dlp atual exige 3.10+. Com o 3.9 o pip instala uma versão antiga, que o YouTube já bloqueia ("The page needs to be reloaded"). Use o Python do Homebrew:
+
+```bash
+brew install python@3.13 ffmpeg deno
+python3.13 -m venv ~/yt-env
+source ~/yt-env/bin/activate
+pip install -r requirements.txt
+```
+
+O `deno` é o runtime JavaScript que o yt-dlp usa para resolver os desafios do YouTube.
+
 ## Uso
 
 ```bash
