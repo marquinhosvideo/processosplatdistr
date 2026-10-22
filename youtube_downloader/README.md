@@ -22,6 +22,9 @@ python baixar.py "https://www.youtube.com/watch?v=o7VtQT4g_HI"
 # Limitar a 720p
 python baixar.py "URL" --qualidade 720
 
+# MP4 em H.264: abre em qualquer player, TV ou editor (máx. 1080p)
+python baixar.py "URL" --compativel
+
 # Só o áudio, em MP3
 python baixar.py "URL" --audio
 
