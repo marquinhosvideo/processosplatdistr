@@ -38,6 +38,9 @@ python baixar.py "URL" --qualidade 720
 # MP4 em H.264: abre em qualquer player, TV ou editor (máx. 1080p)
 python baixar.py "URL" --compativel
 
+# Priorizar AV1 (arquivo menor; só se o YouTube tiver AV1 para esse vídeo)
+python baixar.py "URL" --av1
+
 # Só o áudio, em MP3
 python baixar.py "URL" --audio
 

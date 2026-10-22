@@ -38,8 +38,11 @@ def main() -> None:
     p.add_argument("--legendas", action="store_true", help="Baixar legendas (pt/en)")
     p.add_argument("--playlist", action="store_true",
                    help="Se o link tiver &list=, baixar a playlist inteira")
-    p.add_argument("--compativel", action="store_true",
-                   help="Prioriza H.264 (abre em qualquer player/TV; YouTube limita a 1080p)")
+    codec = p.add_mutually_exclusive_group()
+    codec.add_argument("--compativel", action="store_true",
+                       help="Prioriza H.264 (abre em qualquer player/TV; YouTube limita a 1080p)")
+    codec.add_argument("--av1", action="store_true",
+                       help="Prioriza AV1 (menor arquivo; cai para outro codec se o vídeo não tiver AV1)")
     p.add_argument("--info", action="store_true", help="Só mostrar informações, sem baixar")
     args = p.parse_args()
 
@@ -70,6 +73,8 @@ def main() -> None:
             opts["merge_output_format"] = "mp4"
         if args.compativel:
             opts["format_sort"] = ["vcodec:h264", "res", "acodec:m4a"]
+        elif args.av1:
+            opts["format_sort"] = ["vcodec:av01", "res", "acodec:m4a"]
 
     if args.legendas:
         opts.update({
