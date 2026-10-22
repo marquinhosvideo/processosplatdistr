@@ -20,13 +20,19 @@ FPS_STR = "30000/1001"
 TRECHO = 90  # frames comparados em cada teste (~3 s)
 
 
+def ss(t: float) -> str:
+    """Valor de -ss meio frame antes de t: pular exatamente no timestamp de um
+    frame faz o ffmpeg descartar esse frame e desalinha a comparação em 1."""
+    return f"{max(0.0, t - 0.5 / FPS):.4f}" if t > 0 else "0"
+
+
 def psnr(testado: str, ref: str, t_testado: float, t_ref: float) -> float:
     """PSNR médio de um trecho, em resolução reduzida para ser rápido."""
     norm = f"fps={FPS_STR},scale=480:270,format=gray,trim=end_frame={TRECHO},setpts=PTS-STARTPTS"
     cmd = [
         "ffmpeg", "-hide_banner", "-nostats",
-        "-ss", f"{t_testado:.4f}", "-i", testado,
-        "-ss", f"{t_ref:.4f}", "-i", ref,
+        "-ss", ss(t_testado), "-i", testado,
+        "-ss", ss(t_ref), "-i", ref,
         "-lavfi", f"[0:v]{norm}[a];[1:v]{norm}[b];[a][b]psnr",
         "-an", "-f", "null", "-",
     ]
@@ -76,8 +82,8 @@ def main() -> None:
     filtro = (f"[0:v]{norm}[dist];[1:v]{norm}[ref];"
               f"[dist][ref]libvmaf=log_fmt=json:log_path=vmaf.json:n_threads=8:"
               f"feature=name=psnr|name=float_ssim")
-    cmd = ["ffmpeg", "-ss", f"{ss_test:.4f}", "-i", args.testado,
-           "-ss", f"{ss_ref:.4f}", "-i", args.referencia,
+    cmd = ["ffmpeg", "-ss", ss(ss_test), "-i", args.testado,
+           "-ss", ss(ss_ref), "-i", args.referencia,
            "-lavfi", filtro, "-shortest", "-an", "-f", "null", "-"]
     print("\nComando VMAF alinhado:\n")
     print(" ".join(shlex.quote(c) for c in cmd))
